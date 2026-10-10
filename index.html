@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>画像まとめメーカー</title>
+<style>
+:root{--bg:#fff7fb;--card:#fff;--ink:#4a3a55;--sub:#8a7a95;--pk:#ff8fc1;--lv:#b9a6ff;--line:#f0dcef;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1f1a26;--card:#2a2333;--ink:#f1e8f7;--sub:#b3a5c0;--line:#40344d}}
+:root[data-theme="dark"]{--bg:#1f1a26;--card:#2a2333;--ink:#f1e8f7;--sub:#b3a5c0;--line:#40344d}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;line-height:1.5}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+button,.btn{font:inherit;border:0;border-radius:999px;padding:10px 18px;background:linear-gradient(135deg,var(--pk),var(--lv));color:#fff;font-weight:700;display:inline-block;cursor:pointer}
+button.sm{padding:4px 9px;font-size:13px;background:var(--line);color:var(--ink)}
+button:disabled{opacity:.4}
+.row{display:flex;align-items:center;gap:10px;margin:8px 0}
+.row label{width:84px;font-size:14px;color:var(--sub);flex:none}
+.row label.btn{width:auto;font-size:inherit;color:#fff}
+.row input[type=range]{flex:1;accent-color:var(--pk)}
+.row output{width:44px;text-align:right;font-size:14px}
+select,input[type=color]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px}
+#list{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px}
+.it{flex:none;width:84px;text-align:center}
+.it .th{width:84px;height:84px;border-radius:12px;border:1px solid var(--line);background:repeating-conic-gradient(#0000000d 0 25%,#0000 0 50%) 0 0/14px 14px;display:block}
+.it .bt{display:flex;gap:2px;justify-content:center;margin-top:4px}
+.empty{color:var(--sub);font-size:14px;padding:8px 0}
+.pv{overflow:auto;border-radius:12px;background:repeating-conic-gradient(#0000000d 0 25%,#0000 0 50%) 0 0/16px 16px}
+canvas{display:block;max-width:100%;height:auto;margin:0 auto;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+canvas.th{max-width:none}
+.meta{font-size:13px;color:var(--sub);margin:6px 0 10px}
+#fb img{max-width:100%;border-radius:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>🐰 画像まとめメーカー</h1>
+
+<div class="card">
+  <div class="row"><label class="btn" for="file">画像を選ぶ</label><button class="sm" id="clr">全部消す</button></div>
+  <input id="file" type="file" accept="image/*" multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">
+  <div id="list"><div class="empty">画像を選ぶと、ここに並びます（◀▶で順番を入れ替え）</div></div>
+</div>
+
+<div class="card">
+  <div class="row"><label>列の数</label><input id="cols" type="range" min="1" max="10" value="4"><output id="colsO"></output></div>
+  <div class="row"><label>1枚のサイズ</label><input id="cell" type="range" min="40" max="512" step="2" value="180"><output id="cellO"></output></div>
+  <div class="row"><label>すき間</label><input id="gap" type="range" min="0" max="60" value="8"><output id="gapO"></output></div>
+  <div class="row"><label>まわりの余白</label><input id="pad" type="range" min="0" max="60" value="8"><output id="padO"></output></div>
+  <div class="row"><label>はめ方</label><select id="fit"><option value="contain">全体を表示</option><option value="cover">ぴったり切り抜き</option></select></div>
+  <div class="row"><label>背景</label><select id="bgm"><option value="none">透明</option><option value="#ffffff">白</option><option value="custom">色を選ぶ</option></select><input id="bgc" type="color" value="#ffe3f1" hidden></div>
+</div>
+
+<div class="card">
+  <div class="meta" id="meta">—</div>
+  <div class="meta">👆 プレビューの画像を長押ししてドラッグすると、好きな位置に並べ替えできます</div>
+  <div class="pv"><canvas id="cv" width="10" height="10"></canvas></div>
+  <div class="row" style="margin-top:12px"><button id="save" disabled>PNGで保存</button></div>
+  <div id="fb"></div>
+</div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');
+let items=[],drag=null,G=null;
+
+// 画像を「URLなし」で読み込む（サイトのセキュリティ設定に左右されにくい）
+async function load(file){
+  try{const im=await createImageBitmap(file);return{im,w:im.width,h:im.height}}catch(_){}
+  return new Promise(res=>{
+    const fr=new FileReader();
+    fr.onload=()=>{const im=new Image();im.onload=()=>res({im,w:im.naturalWidth,h:im.naturalHeight});im.onerror=()=>res(null);im.src=fr.result};
+    fr.onerror=()=>res(null);fr.readAsDataURL(file);
+  });
+}
+async function addFiles(fs){for(const f of fs){if(f.type&&!f.type.startsWith('image/'))continue;const r=await load(f);if(r)items.push(r)}sync()}
+$('file').onchange=async e=>{const fs=[...e.target.files];e.target.value='';await addFiles(fs)};
+addEventListener('dragover',e=>e.preventDefault());
+addEventListener('drop',e=>{e.preventDefault();addFiles([...e.dataTransfer.files])});
+$('clr').onclick=()=>{items=[];sync()};
+
+['cols','cell','gap','pad','fit','bgm','bgc'].forEach(k=>$(k).oninput=draw);
+$('bgm').onchange=()=>{$('bgc').hidden=$('bgm').value!=='custom';draw()};
+
+function sync(){
+  const L=$('list');L.innerHTML='';
+  if(!items.length)L.innerHTML='<div class="empty">画像を選ぶと、ここに並びます（◀▶で順番を入れ替え）</div>';
+  items.forEach((it,i)=>{
+    const d=document.createElement('div');d.className='it';
+    const th=document.createElement('canvas');th.width=th.height=168;th.className='th';
+    const t=th.getContext('2d'),s=Math.min(168/it.w,168/it.h);
+    t.drawImage(it.im,(168-it.w*s)/2,(168-it.h*s)/2,it.w*s,it.h*s);
+    d.appendChild(th);
+    const b=document.createElement('div');b.className='bt';
+    [['◀',-1],['▶',1],['✕',0]].forEach(([tx,v])=>{
+      const x=document.createElement('button');x.className='sm';x.textContent=tx;
+      x.onclick=()=>{
+        if(v===0)items.splice(i,1);
+        else{const j=i+v;if(j<0||j>=items.length)return;[items[i],items[j]]=[items[j],items[i]]}
+        sync();
+      };b.appendChild(x);
+    });
+    d.appendChild(b);L.appendChild(d);
+  });
+  draw();
+}
+
+function draw(){
+  const cols=+$('cols').value,cell=+$('cell').value,gap=+$('gap').value,pad=+$('pad').value;
+  $('colsO').value=cols;$('cellO').value=cell;$('gapO').value=gap;$('padO').value=pad;
+  const n=items.length;$('save').disabled=!n;
+  if(!n){G=null;cv.width=cv.height=10;ctx.clearRect(0,0,10,10);$('meta').textContent='まだ画像がありません';return}
+  const c=Math.min(cols,n),r=Math.ceil(n/c);
+  const W=pad*2+c*cell+(c-1)*gap,H=pad*2+r*cell+(r-1)*gap;
+  cv.width=W;cv.height=H;G={c,cell,gap,pad,n};
+  const m=$('bgm').value;
+  if(m!=='none'){ctx.fillStyle=m==='custom'?$('bgc').value:m;ctx.fillRect(0,0,W,H)}
+  const cover=$('fit').value==='cover';
+  const paint=(it,x,y)=>{
+    const w=it.w,h=it.h;
+    const s=cover?Math.max(cell/w,cell/h):Math.min(cell/w,cell/h);
+    const dw=w*s,dh=h*s;
+    ctx.save();ctx.beginPath();ctx.rect(x,y,cell,cell);ctx.clip();
+    ctx.drawImage(it.im,x+(cell-dw)/2,y+(cell-dh)/2,dw,dh);ctx.restore();
+  };
+  items.forEach((it,i)=>{
+    ctx.globalAlpha=(drag&&i===drag.from)?.25:1;
+    paint(it,pad+(i%c)*(cell+gap),pad+Math.floor(i/c)*(cell+gap));
+  });
+  ctx.globalAlpha=1;
+  if(drag){
+    const tx=pad+(drag.to%c)*(cell+gap),ty=pad+Math.floor(drag.to/c)*(cell+gap);
+    ctx.strokeStyle='#ff4fa3';ctx.lineWidth=Math.max(3,W/150);ctx.strokeRect(tx,ty,cell,cell);
+    ctx.globalAlpha=.85;paint(items[drag.from],drag.x-cell/2,drag.y-cell/2);ctx.globalAlpha=1;
+  }
+  $('meta').textContent=`${n}枚 ・ ${c}列 × ${r}行 ・ ${W}×${H}px`+(Math.max(W,H)>8000?'（大きすぎて保存できない場合があります）':'');
+}
+
+$('save').onclick=()=>{
+  cv.toBlob(b=>{
+    if(!b)return;
+    const url=URL.createObjectURL(b);
+    const a=document.createElement('a');
+    a.href=url;a.download='まとめ画像.png';
+    document.body.appendChild(a);a.click();a.remove();
+    // 保存できない環境向け：画像も表示して長押し保存できるようにする
+    const fb=$('fb');fb.innerHTML='<div class="meta">保存されない場合は、下の画像を長押しして保存してね</div>';
+    const im=new Image();im.src=url;fb.appendChild(im);
+  },'image/png');
+};
+
+// ---- 長押しドラッグで並べ替え ----
+let timer=null,pid=null,sx=0,sy=0,cx=0,cy=0,scrollT=null;
+const pos=e=>{const r=cv.getBoundingClientRect(),k=cv.width/r.width;return{x:(e.clientX-r.left)*k,y:(e.clientY-r.top)*k}};
+const hit=(p,strict)=>{
+  if(!G)return -1;
+  const st=G.cell+G.gap,rows=Math.ceil(G.n/G.c);
+  let col=Math.floor((p.x-G.pad+G.gap/2)/st),row=Math.floor((p.y-G.pad+G.gap/2)/st);
+  if(strict){
+    const ox=p.x-G.pad-col*st,oy=p.y-G.pad-row*st;
+    if(col<0||row<0||col>=G.c||row>=rows||ox<0||ox>G.cell||oy<0||oy>G.cell)return -1;
+    const i=row*G.c+col;return i<G.n?i:-1;
+  }
+  col=Math.min(G.c-1,Math.max(0,col));row=Math.min(rows-1,Math.max(0,row));
+  return Math.min(G.n-1,row*G.c+col);
+};
+function autoScroll(){
+  if(!drag)return;
+  const m=70,h=innerHeight;let dy=0;
+  if(cy<m)dy=-(m-cy)/4;else if(cy>h-m)dy=(cy-(h-m))/4;
+  if(!dy)return;
+  scrollBy(0,dy);
+  const p=pos({clientX:cx,clientY:cy});drag.x=p.x;drag.y=p.y;drag.to=hit(p);draw();
+}
+cv.addEventListener('pointerdown',e=>{
+  if(!items.length||e.button>0)return;
+  const p=pos(e),i=hit(p,true);if(i<0)return;
+  sx=cx=e.clientX;sy=cy=e.clientY;pid=e.pointerId;
+  const go=()=>{
+    timer=null;drag={from:i,to:i,x:p.x,y:p.y};
+    try{cv.setPointerCapture(pid)}catch(_){}
+    navigator.vibrate&&navigator.vibrate(20);
+    draw();scrollT=setInterval(autoScroll,16);
+  };
+  if(e.pointerType==='mouse')go();else timer=setTimeout(go,400);
+});
+cv.addEventListener('pointermove',e=>{
+  if(e.pointerId!==pid)return;
+  if(timer){if(Math.hypot(e.clientX-sx,e.clientY-sy)>8){clearTimeout(timer);timer=null}return}
+  if(!drag)return;
+  cx=e.clientX;cy=e.clientY;
+  const p=pos(e);drag.x=p.x;drag.y=p.y;drag.to=hit(p);draw();
+});
+function endDrag(e,ok){
+  if(e.pointerId!==pid)return;
+  clearTimeout(timer);timer=null;clearInterval(scrollT);pid=null;
+  if(!drag)return;
+  const{from,to}=drag;drag=null;
+  if(ok&&from!==to){const[it]=items.splice(from,1);items.splice(to,0,it);sync()}else draw();
+}
+cv.addEventListener('pointerup',e=>endDrag(e,true));
+cv.addEventListener('pointercancel',e=>endDrag(e,false));
+cv.addEventListener('touchmove',e=>{if(drag)e.preventDefault()},{passive:false});
+cv.addEventListener('contextmenu',e=>e.preventDefault());
+draw();
+</script>
+</body>
+</html>
